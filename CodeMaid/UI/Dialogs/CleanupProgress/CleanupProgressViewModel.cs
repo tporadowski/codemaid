@@ -2,6 +2,10 @@ using SteveCadwallader.CodeMaid.Logic.Cleaning;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using EnvDTE;
+using System;
+using System.IO;
+using SteveCadwallader.CodeMaid.Helpers;
 
 namespace SteveCadwallader.CodeMaid.UI.Dialogs.CleanupProgress
 {
@@ -144,9 +148,10 @@ namespace SteveCadwallader.CodeMaid.UI.Dialogs.CleanupProgress
         /// </param>
         private void backgroundWorker_DoWork(object sender, DoWorkEventArgs e)
         {
-            var bw = (BackgroundWorker)sender;
-            var items = (IEnumerable<object>)e.Argument;
+			var bw = (BackgroundWorker) sender;
+			var items = (IEnumerable<object>) e.Argument;
             int i = 0;
+			int cleanUpCount = 0;
 
             foreach (dynamic item in items)
             {
@@ -156,10 +161,51 @@ namespace SteveCadwallader.CodeMaid.UI.Dialogs.CleanupProgress
                     break;
                 }
 
-                bw.ReportProgress(++i, item);
+				bw.ReportProgress(i++, item);
+
+				if (IsProcessed((EnvDTE.ProjectItem) item))
+				{
+					continue;
+				}
 
                 CodeCleanupManager.Cleanup(item);
+				cleanUpCount++;
+
+				MarkProcessed((EnvDTE.ProjectItem) item);
+
+				if ((cleanUpCount % 40) == 0)
+				{
+					//System.GC.Collect(2, System.GCCollectionMode.Forced, true);
+					OutputWindowHelper.DiagnosticWriteLine($"Calling garbage collection ({cleanUpCount} items processed) and waiting 3 minutes");
+					System.GC.Collect();
+					System.Threading.Thread.Sleep(3 * 60 * 1000);
+				}
+			}
             }
+
+		private void MarkProcessed(ProjectItem item)
+		{
+			var logFilePath = GetLogFilePath(item);
+			File.AppendAllText(logFilePath, $"{item.GetFileName()}\n");
+		}
+
+		private bool IsProcessed(ProjectItem item)
+		{
+			var logFilePath = GetLogFilePath(item);
+
+			if (!File.Exists(logFilePath))
+			{
+				return false;
+			}
+
+			var processedFiles = File.ReadAllLines(logFilePath);
+			var itemFileName = item.GetFileName();
+			return processedFiles.Any(line => line.Equals(itemFileName));
+		}
+
+		private static string GetLogFilePath(ProjectItem item)
+		{
+			return Path.Combine(Path.GetDirectoryName(item.ContainingProject.FileName), "CodeMaidCleanUp.log");
         }
 
         /// <summary>
